@@ -1,17 +1,19 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { AssetType, ProjectState, TextLayer } from './types';
 import { generateBackground, generateSvgIcon, suggestLayout } from './services/geminiService';
 import Canvas from './components/Canvas';
 import ControlPanel from './components/ControlPanel';
 import Header from './components/Header';
-import { Loader2, Download, RefreshCw, LayoutTemplate } from 'lucide-react';
+import { 
+  Loader2, Download, RefreshCw, LayoutTemplate, 
+  MousePointer2, ZoomIn, ZoomOut, Maximize 
+} from 'lucide-react';
 
-// Factory function to ensure fresh state objects
 const getInitialState = (): ProjectState => ({
   assetType: AssetType.POSTER,
   brief: '',
-  width: 800,
-  height: 1000,
+  width: 1080,
+  height: 1350,
   background: null,
   textLayers: [],
   isGenerating: false,
@@ -22,6 +24,78 @@ const getInitialState = (): ProjectState => ({
 export default function App() {
   const [project, setProject] = useState<ProjectState>(getInitialState());
   const [error, setError] = useState<string | null>(null);
+  
+  // Theme State
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
+  // Zoom State
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [isFitToScreen, setIsFitToScreen] = useState<boolean>(true);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Apply theme class to document
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  const toggleTheme = () => setIsDarkMode(!isDarkMode);
+
+  // Monitor viewport size for "Fit to Screen" calculation
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setViewportSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        });
+      }
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Calculate effective scale
+  const getEffectiveScale = () => {
+    if (isFitToScreen && viewportSize.width > 0 && viewportSize.height > 0) {
+      const padding = 80; // Space around canvas
+      const availableW = Math.max(0, viewportSize.width - padding);
+      const availableH = Math.max(0, viewportSize.height - padding);
+      
+      // Limit fit scale to 1 (100%) so small images don't look blurry, 
+      // unless users want to see it huge, but generally fit = see whole thing.
+      return Math.min(scaleX, scaleY, 1); 
+      
+      var scaleX = availableW / project.width;
+      var scaleY = availableH / project.height;
+      return Math.min(scaleX, scaleY, 1);
+    }
+    return zoomLevel;
+  };
+
+  const currentScale = getEffectiveScale();
+
+  const handleZoomIn = () => {
+    setIsFitToScreen(false);
+    setZoomLevel(prev => Math.min(prev + 0.1, 3.0)); // Max 300%
+  };
+
+  const handleZoomOut = () => {
+    setIsFitToScreen(false);
+    setZoomLevel(prev => Math.max(prev - 0.1, 0.1)); // Min 10%
+  };
+
+  const handleFitToScreen = () => {
+    setIsFitToScreen(true);
+  };
 
   const calculatePixelFontSize = (width: number, height: number, percent: number) => {
     const baseDimension = Math.min(width, height);
@@ -32,17 +106,16 @@ export default function App() {
     if (window.confirm("Start a new project? Current artwork will be cleared.")) {
       setProject(prev => ({
         ...getInitialState(),
-        // Preserve user's current configuration preferences
         assetType: prev.assetType,
         width: prev.width,
         height: prev.height,
-        // Clear brief and content
         brief: '',
         background: null,
         svgContent: null,
         textLayers: []
       }));
       setError(null);
+      setIsFitToScreen(true);
     }
   };
 
@@ -56,7 +129,6 @@ export default function App() {
 
     try {
       if (project.assetType === AssetType.ICON || project.assetType === AssetType.LOGO) {
-        // SVG Generation Flow
         const svgCode = await generateSvgIcon(project.brief, project.assetType);
         setProject(prev => ({
           ...prev,
@@ -65,7 +137,6 @@ export default function App() {
           textLayers: []
         }));
       } else {
-        // Image + Layout Flow
         const imageBase64 = await generateBackground(project.brief, project.assetType);
         
         setProject(prev => ({ 
@@ -75,7 +146,6 @@ export default function App() {
           isAnalyzing: true 
         }));
 
-        // Chain layout analysis
         const layoutSuggestion = await suggestLayout(imageBase64, project.brief, project.assetType);
         
         setProject(prev => ({
@@ -167,7 +237,6 @@ export default function App() {
         link.click();
         document.body.removeChild(link);
       } else {
-        // Poster / Slide - Render to Canvas
         if (!project.background) return;
 
         const canvas = document.createElement('canvas');
@@ -176,7 +245,6 @@ export default function App() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // 1. Draw Background
         const img = new Image();
         img.src = project.background;
         await new Promise((resolve, reject) => {
@@ -185,19 +253,17 @@ export default function App() {
         });
         ctx.drawImage(img, 0, 0, project.width, project.height);
 
-        // 2. Draw Text Layers
         project.textLayers.forEach(layer => {
             ctx.save();
             ctx.fillStyle = layer.color;
             ctx.font = `${layer.fontWeight === 'bold' ? 'bold' : layer.fontWeight === '300' ? '300' : 'normal'} ${layer.fontSize}px ${layer.fontFamily}, sans-serif`;
             ctx.textAlign = layer.align;
-            ctx.textBaseline = 'top'; // handle vertical manually for multiline
+            ctx.textBaseline = 'top';
 
             const x = (layer.x / 100) * project.width;
             let y = (layer.y / 100) * project.height;
             const maxWidth = (layer.boxWidth / 100) * project.width;
 
-            // Simple line wrapping
             const words = layer.text.split(' ');
             let line = '';
             const lines = [];
@@ -217,34 +283,20 @@ export default function App() {
             const lineHeight = layer.fontSize * 1.3;
             const totalHeight = lines.length * lineHeight;
 
-            // Adjust Y for anchor point
             if (layer.verticalAlign === 'center') {
                 y -= totalHeight / 2;
             } else if (layer.verticalAlign === 'bottom') {
                 y -= totalHeight;
             }
-            // if top, y stays as is
 
             lines.forEach((l, i) => {
-                // Adjust X for alignment
-                let drawX = x;
-                if (layer.align === 'left') {
-                    // x is left edge
-                    drawX = x;
-                } else if (layer.align === 'right') {
-                    // x is right edge
-                    drawX = x; 
-                } else {
-                    // x is center
-                    drawX = x;
-                }
+                let drawX = x; // Align handles X anchor
                 ctx.fillText(l.trim(), drawX, y + (i * lineHeight));
             });
 
             ctx.restore();
         });
 
-        // 3. Download
         const dataUrl = canvas.toDataURL('image/png');
         const link = document.createElement('a');
         link.href = dataUrl;
@@ -260,12 +312,12 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-gray-900 text-gray-100 overflow-hidden">
-      <Header />
+    <div className="flex flex-col h-screen w-full bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans selection:bg-indigo-500/30 transition-colors duration-200">
+      <Header isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
       
       <main className="flex flex-1 overflow-hidden relative">
         {/* Sidebar Controls */}
-        <aside className="w-80 flex-shrink-0 border-r border-gray-800 bg-gray-900 overflow-y-auto z-10 custom-scrollbar">
+        <aside className="w-[340px] flex-shrink-0 border-r border-gray-200 dark:border-white/5 bg-white/80 dark:bg-gray-900/50 backdrop-blur-sm overflow-y-auto z-20 custom-scrollbar flex flex-col transition-colors duration-200">
           <ControlPanel 
             project={project} 
             setProject={setProject} 
@@ -276,69 +328,136 @@ export default function App() {
           />
         </aside>
 
-        {/* Canvas Area */}
-        <section className="flex-1 relative bg-gray-950 flex flex-col items-center justify-center p-8 overflow-hidden">
-           {/* Toolbar for quick actions */}
-           <div className="absolute top-4 right-4 flex gap-2 z-20">
-              {(project.background && !project.isAnalyzing) && (
-                <button 
-                  onClick={handleRegenerateLayout}
-                  className="bg-gray-800 hover:bg-gray-700 text-white p-2 rounded-md shadow-lg border border-gray-700 flex items-center gap-2 text-sm transition-colors"
-                  title="Regenerate Layout Only"
-                >
-                  <LayoutTemplate size={16} />
-                  <span>Remix Layout</span>
-                </button>
-              )}
+        {/* Main Workspace */}
+        <div className="flex-1 flex flex-col relative bg-gray-100 dark:bg-gray-950 min-w-0 transition-colors duration-200">
+           
+           {/* Workspace Toolbar */}
+           <div className="h-14 border-b border-gray-200 dark:border-white/5 bg-white/50 dark:bg-gray-900/30 backdrop-blur-md flex items-center justify-between px-6 flex-shrink-0 z-10 transition-colors duration-200">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 text-xs text-gray-500 font-medium">
+                  <span className="flex items-center gap-1.5">
+                    <MousePointer2 size={14} />
+                    Selection Mode
+                  </span>
+                  <span className="w-px h-4 bg-gray-300 dark:bg-white/10"></span>
+                  <span>{project.width} x {project.height}px</span>
+                </div>
+                
+                {/* Zoom Controls */}
+                <div className="flex items-center gap-1 bg-gray-200 dark:bg-white/5 rounded-lg p-0.5 border border-gray-300 dark:border-white/5 ml-4 transition-colors">
+                  <button 
+                    onClick={handleZoomOut}
+                    className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10 rounded transition-colors"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <span className="text-[10px] w-12 text-center font-mono text-gray-600 dark:text-gray-400">
+                    {Math.round(currentScale * 100)}%
+                  </span>
+                  <button 
+                    onClick={handleZoomIn}
+                    className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10 rounded transition-colors"
+                    title="Zoom In"
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                  <div className="w-px h-3 bg-gray-300 dark:bg-white/10 mx-1"></div>
+                  <button 
+                    onClick={handleFitToScreen}
+                    className={`p-1.5 rounded transition-colors ${isFitToScreen ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10'}`}
+                    title="Fit to Screen"
+                  >
+                    <Maximize size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {(project.background && !project.isAnalyzing) && (
+                  <button 
+                    onClick={handleRegenerateLayout}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-medium transition-colors border border-gray-200 dark:border-white/5 shadow-sm"
+                  >
+                    <LayoutTemplate size={14} />
+                    Remix Layout
+                  </button>
+                )}
+                
+                {(project.background || project.svgContent) && !project.isGenerating && (
+                   <button 
+                      onClick={handleDownload}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors shadow-lg shadow-indigo-500/20"
+                   >
+                      <Download size={14} />
+                      Download
+                   </button>
+                )}
+              </div>
+           </div>
+
+           {/* Canvas Container Area */}
+           <section className="flex-1 relative overflow-hidden flex flex-col">
+              {/* Background Pattern */}
+              <div className="absolute inset-0 pointer-events-none opacity-[0.03] dark:opacity-[0.03] opacity-5" 
+                   style={{ 
+                       backgroundImage: 'linear-gradient(currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px)', 
+                       backgroundSize: '20px 20px' 
+                   }} 
+              />
               
-              {(project.background || project.svgContent) && !project.isGenerating && (
-                 <button 
-                    onClick={handleDownload}
-                    className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-md shadow-lg flex items-center gap-2 text-sm transition-colors font-medium"
-                    title="Download Asset"
-                 >
-                    <Download size={16} />
-                    <span>Download</span>
-                 </button>
-              )}
-           </div>
-
-           <div className="relative shadow-2xl shadow-black/50 transition-all duration-300">
-             <Canvas 
-               project={project} 
-               onUpdateLayer={updateTextLayer}
-               onRemoveLayer={removeTextLayer}
-             />
-             
-             {/* Loading Overlays */}
-             {project.isGenerating && (
-               <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center z-50 rounded-md">
-                 <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
-                 <p className="text-blue-200 font-medium">Generating pixels...</p>
-               </div>
-             )}
-             
-             {project.isAnalyzing && (
-               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-50 rounded-md">
-                 <Loader2 className="w-10 h-10 text-purple-500 animate-spin mb-4" />
-                 <p className="text-purple-200 font-medium">Analyzing composition...</p>
-               </div>
-             )}
-           </div>
-
-           {/* Empty State / Hints */}
-           {!project.background && !project.svgContent && !project.isGenerating && (
-             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-               <div className="text-gray-600 text-center max-w-md p-6 border-2 border-dashed border-gray-800 rounded-xl">
-                 <div className="bg-gray-800/50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <RefreshCw className="text-gray-500" />
+              {/* Scrollable Viewport */}
+              <div 
+                ref={scrollContainerRef}
+                className="flex-1 overflow-auto p-8 custom-scrollbar relative flex flex-col"
+              >
+                 {/* This wrapper grows with the canvas to force scrollbars, and margin-auto centers it when small */}
+                 <div className="m-auto relative transition-all duration-200 ease-out" style={{
+                   width: project.width * currentScale,
+                   height: project.height * currentScale,
+                   minWidth: project.width * currentScale,
+                   minHeight: project.height * currentScale
+                 }}>
+                   <div className="shadow-2xl shadow-black/20 dark:shadow-black ring-1 ring-black/5 dark:ring-white/10 rounded-sm">
+                     <Canvas 
+                       project={project} 
+                       scale={currentScale}
+                       onUpdateLayer={updateTextLayer}
+                       onRemoveLayer={removeTextLayer}
+                     />
+                     
+                     {/* Loading Overlays - Positioned relative to canvas */}
+                     {project.isGenerating && (
+                       <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
+                         <Loader2 className="w-10 h-10 text-indigo-500 animate-spin mb-4" />
+                         <p className="text-indigo-600 dark:text-indigo-200 font-medium tracking-wide text-sm">Generating pixels...</p>
+                       </div>
+                     )}
+                     
+                     {project.isAnalyzing && (
+                       <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
+                         <Loader2 className="w-10 h-10 text-purple-500 animate-spin mb-4" />
+                         <p className="text-purple-600 dark:text-purple-200 font-medium tracking-wide text-sm">Analyzing composition...</p>
+                       </div>
+                     )}
+                   </div>
                  </div>
-                 <h3 className="text-xl font-semibold mb-2">Ready to Create</h3>
-                 <p>Select an asset type and enter a brief to start generating your design.</p>
-               </div>
-             </div>
-           )}
-        </section>
+              </div>
+
+               {/* Empty State / Hints (Global) */}
+               {!project.background && !project.svgContent && !project.isGenerating && (
+                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                   <div className="text-center max-w-md p-8">
+                     <div className="bg-white/50 dark:bg-gray-800/30 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 ring-1 ring-gray-200 dark:ring-white/5 backdrop-blur-sm shadow-sm">
+                        <RefreshCw className="text-gray-400 dark:text-gray-600" size={32} strokeWidth={1.5} />
+                     </div>
+                     <h3 className="text-2xl font-bold text-gray-800 dark:text-white mb-3 tracking-tight">Design Workspace</h3>
+                     <p className="text-gray-500 text-sm leading-relaxed">Configure your project in the sidebar to generate a new asset.</p>
+                   </div>
+                 </div>
+               )}
+           </section>
+        </div>
       </main>
     </div>
   );

@@ -14,44 +14,50 @@ const getClient = () => {
  */
 export async function generateBackground(brief: string, type: AssetType): Promise<string> {
   const ai = getClient();
-  const model = "gemini-2.5-flash-image"; // Default for general image generation
+  // Using Nano Banana (Flash Image) model as requested
+  const model = "gemini-2.5-flash-image"; 
 
   let prompt = "";
+  let aspectRatio = "1:1";
+
   switch (type) {
     case AssetType.POSTER:
-      prompt = `Create a strictly text-free poster background for: "${brief}". 
+      aspectRatio = "3:4"; // Closest to 4:5 vertical poster
+      prompt = `Create a high-fidelity, strictly text-free poster background for: "${brief}". 
       
       CRITICAL CONSTRAINTS:
       1. ABSOLUTELY NO TEXT, LETTERS, NUMBERS, OR CHARACTERS. 
-      2. DO NOT include fake text, gibberish, or 'lorem ipsum' placeholders.
-      3. The image must be purely visual/illustrative.
-      
-      Composition:
-      - Leave distinct negative space (low detail, low contrast) suitable for overlaying text later.
-      - Professional graphic design style.
-      - High visual impact but clean enough for typography.`;
+      2. The image must be purely visual/illustrative.
+      3. Use a professional graphic design style with high visual impact.
+      4. Leave distinct negative space (low detail, low contrast) suitable for overlaying text later.`;
       break;
     case AssetType.SLIDE:
-      prompt = `Create a strictly text-free presentation slide background for: "${brief}".
+      aspectRatio = "16:9";
+      prompt = `Create a high-fidelity, strictly text-free presentation slide background for: "${brief}".
       
       CRITICAL CONSTRAINTS:
-      1. ABSOLUTELY NO TEXT, WORDS, OR CHARACTERS in the image.
+      1. ABSOLUTELY NO TEXT, WORDS, OR CHARACTERS.
       2. NO watermarks or placeholder labels.
-      
-      Composition:
-      - Wide aspect ratio.
-      - Clean, minimalist aesthetic.
-      - Large empty areas or subtle textures specifically designed for bullet points and body text.
-      - No distracting elements in the content area.`;
+      3. Clean, minimalist aesthetic suitable for business or creative presentations.
+      4. Ensure large empty areas or subtle textures specifically designed for bullet points and body text.`;
       break;
     default:
+      aspectRatio = "1:1";
       prompt = `An artistic background for ${brief}. High quality, abstract, strictly no text or letters.`;
   }
 
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: prompt,
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          // imageSize is not supported for gemini-2.5-flash-image, so we only send aspectRatio
+          aspectRatio: aspectRatio,
+        }
+      }
     });
 
     const candidates = response.candidates;
